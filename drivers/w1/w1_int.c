@@ -129,6 +129,10 @@ int w1_add_master_device(struct w1_bus_master *master)
 		}
 	} while (found);
 
+	if (master->master_id) {
+		id = (*master->master_id)(master->data);
+	}
+
 	dev = w1_alloc_dev(id, w1_max_slave_count, w1_max_slave_ttl,
 		&w1_master_driver, &w1_master_device);
 	if (!dev) {
