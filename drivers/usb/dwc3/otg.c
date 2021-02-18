@@ -226,16 +226,25 @@ static int sleep_until_event(struct dwc3_otg *otg, u32 otg_mask, u32 user_mask,
 	return rc;
 }
 
-static void set_capabilities(struct dwc3_otg *otg)
+static void set_capabilities(struct dwc3_otg *otg , bool is_host)
 {
 	u32 ocfg = 0;
 
 	otg_dbg(otg, "\n");
-	if (srp_capable(otg))
-		ocfg |= OCFG_SRP_CAP;
+	if (srp_capable(otg)) {
+		if (is_host == true)
+			ocfg &= ~OCFG_SRP_CAP;
+		else
+			ocfg |= OCFG_SRP_CAP;
 
-	if (hnp_capable(otg))
-		ocfg |= OCFG_HNP_CAP;
+	}
+
+	if (hnp_capable(otg)) {
+		if (is_host == true)
+			ocfg &= ~OCFG_HNP_CAP;
+		else
+			ocfg |= OCFG_HNP_CAP;
+	}
 
 	otg_write(otg, OCFG, ocfg);
 
@@ -355,7 +364,7 @@ skip:
 	if (xhci->shared_hcd)
 		xhci->shared_hcd->self.otg_port = 1;
 
-	set_capabilities(otg);
+	set_capabilities(otg, true);
 
 	/* Power the port only for A-host */
 	if (otg->otg.state == OTG_STATE_A_WAIT_VRISE) {
@@ -510,7 +519,7 @@ static void start_peripheral(struct dwc3_otg *otg)
 		return;
 	}
 
-	set_capabilities(otg);
+	set_capabilities(otg, false);
 
 	dwc3_otg_setup_event_buffers(otg);
 
@@ -602,7 +611,7 @@ static enum usb_otg_state do_b_idle(struct dwc3_otg *otg);
 static int init_b_device(struct dwc3_otg *otg)
 {
 	otg_dbg(otg, "\n");
-	set_capabilities(otg);
+	set_capabilities(otg, false);
 
 	if (!set_peri_mode(otg, PERI_MODE_PERIPHERAL))
 		otg_err(otg, "Failed to start peripheral\n");
