@@ -1310,8 +1310,15 @@
 	hpet_mmap=	[X86, HPET_MMAP] Allow userspace to mmap HPET
 			registers.  Default set by CONFIG_HPET_MMAP_DEFAULT.
 
-	hugepages=	[HW,X86-32,IA-64] HugeTLB pages to allocate at boot.
-	hugepagesz=	[HW,IA-64,PPC,X86-64] The size of the HugeTLB pages.
+	hugetlb_cma=	[ARM64] The size of a cma area used for allocation
+			of gigantic hugepages.
+			Format: nn[GTPE] | nn%
+
+			If enabled, boot-time allocation of gigantic hugepages
+			is skipped.
+
+	hugepages=	[HW,X86-32,IA-64,ARM64] HugeTLB pages to allocate at boot.
+	hugepagesz=	[HW,IA-64,PPC,X86-64,ARM64] The size of the HugeTLB pages.
 			On x86-64 and powerpc, this option can be specified
 			multiple times interleaved with hugepages= to reserve
 			huge pages of different sizes. Valid pages sizes on
