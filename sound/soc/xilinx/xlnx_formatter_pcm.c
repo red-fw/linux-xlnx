@@ -55,13 +55,15 @@
 #define CFG_S2MM_XFER_SHIFT	29
 #define CFG_S2MM_PKG_MASK	BIT(28)
 
+#define AUD_CTRL_DATA_WIDTH_MASK	GENMASK(18, 16)
 #define AUD_CTRL_DATA_WIDTH_SHIFT	16
+#define AUD_CTRL_ACTIVE_CH_MASK		GENMASK(22, 19)
 #define AUD_CTRL_ACTIVE_CH_SHIFT	19
 #define PERIOD_CFG_PERIODS_SHIFT	16
 
 #define PERIODS_MIN		2
 #define PERIODS_MAX		6
-#define PERIOD_BYTES_MIN	192
+#define PERIOD_BYTES_MIN	384  // Needs to be a multiple of (num_channels * 32)
 #define PERIOD_BYTES_MAX	(50 * 1024)
 
 /* audio params macros */
@@ -105,7 +107,7 @@ static const struct snd_pcm_hardware xlnx_pcm_hardware = {
 	.formats = SNDRV_PCM_FMTBIT_S8 | SNDRV_PCM_FMTBIT_S16_LE |
 		   SNDRV_PCM_FMTBIT_S24_LE,
 	.channels_min = 2,
-	.channels_max = 2,
+	.channels_max = 4,
 	.rates = SNDRV_PCM_RATE_8000_192000,
 	.rate_min = 8000,
 	.rate_max = 192000,
@@ -530,6 +532,7 @@ static int xlnx_formatter_pcm_hw_params(struct snd_pcm_substream *substream,
 	writel(high, stream_data->mmio + XLNX_AUD_BUFF_ADDR_MSB);
 
 	val = readl(stream_data->mmio + XLNX_AUD_CTRL);
+        val &= ~AUD_CTRL_DATA_WIDTH_MASK;
 	bits_per_sample = params_width(params);
 	switch (bits_per_sample) {
 	case 8:
@@ -549,6 +552,7 @@ static int xlnx_formatter_pcm_hw_params(struct snd_pcm_substream *substream,
 		break;
 	}
 
+        val &= ~AUD_CTRL_ACTIVE_CH_MASK;
 	val |= active_ch << AUD_CTRL_ACTIVE_CH_SHIFT;
 	writel(val, stream_data->mmio + XLNX_AUD_CTRL);
 
@@ -736,7 +740,8 @@ static int xlnx_formatter_pcm_probe(struct platform_device *pdev)
 	    aud_drv_data->nodes[XLNX_CAPTURE])
 		aud_drv_data->pdev =
 			platform_device_register_resndata(&pdev->dev,
-							  "xlnx_snd_card", 0,
+							  "xlnx_snd_card",
+							  PLATFORM_DEVID_AUTO,
 							  NULL, 0,
 							  &aud_drv_data->nodes,
 							  pdata_size);

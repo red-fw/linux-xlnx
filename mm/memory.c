@@ -4510,6 +4510,7 @@ static void clear_gigantic_page(struct page *page,
 				unsigned long addr,
 				unsigned int pages_per_huge_page)
 {
+#if 0
 	int i;
 	struct page *p = page;
 
@@ -4519,6 +4520,7 @@ static void clear_gigantic_page(struct page *page,
 		cond_resched();
 		clear_user_highpage(p, addr + i * PAGE_SIZE);
 	}
+#endif
 }
 void clear_huge_page(struct page *page,
 		     unsigned long addr_hint, unsigned int pages_per_huge_page)

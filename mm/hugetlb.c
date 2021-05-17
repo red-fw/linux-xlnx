@@ -24,6 +24,8 @@
 #include <linux/swap.h>
 #include <linux/swapops.h>
 #include <linux/jhash.h>
+#include <linux/cma.h>
+#include <linux/memblock.h>
 
 #include <asm/page.h>
 #include <asm/pgtable.h>
@@ -41,6 +43,9 @@ int hugepages_treat_as_movable;
 int hugetlb_max_hstate __read_mostly;
 unsigned int default_hstate_idx;
 struct hstate hstates[HUGE_MAX_HSTATE];
+
+static struct cma *hugetlb_cma[MAX_NUMNODES];
+
 /*
  * Minimum page order among possible hugepage sizes, set to a proper value
  * at boot time.
@@ -1062,6 +1067,11 @@ static void destroy_compound_gigantic_page(struct page *page,
 
 static void free_gigantic_page(struct page *page, unsigned int order)
 {
+	if (hugetlb_cma[0]) {
+		cma_release(hugetlb_cma[page_to_nid(page)], page, 1 << order);
+		return;
+	}
+
 	free_contig_range(page_to_pfn(page), 1 << order);
 }
 
@@ -1121,6 +1131,20 @@ static struct page *alloc_gigantic_page(int nid, struct hstate *h)
 	gfp_mask = htlb_alloc_mask(h) | __GFP_THISNODE;
 	zonelist = node_zonelist(nid, gfp_mask);
 	for_each_zone_zonelist_nodemask(zone, z, zonelist, gfp_zone(gfp_mask), NULL) {
+
+		if (hugetlb_cma[0]) {
+			struct page *page;
+
+			if (!hugetlb_cma[nid])
+				break;
+
+			page = cma_alloc(hugetlb_cma[nid], nr_pages,
+					 huge_page_order(h), true);
+			if (page)
+				return page;
+
+			return NULL;
+		}
 		spin_lock_irqsave(&zone->lock, flags);
 
 		pfn = ALIGN(zone->zone_start_pfn, nr_pages);
@@ -2167,6 +2191,10 @@ static void __init hugetlb_hstate_alloc_pages(struct hstate *h)
 
 	for (i = 0; i < h->max_huge_pages; ++i) {
 		if (hstate_is_gigantic(h)) {
+			if (hugetlb_cma[0]) {
+				pr_warn_once("HugeTLB: hugetlb_cma is enabled, skip boot time allocation\n");
+				break;
+			}
 			if (!alloc_bootmem_huge_page(h))
 				break;
 		} else if (!alloc_fresh_huge_page(h,
@@ -4779,3 +4807,83 @@ void putback_active_hugepage(struct page *page)
 	spin_unlock(&hugetlb_lock);
 	put_page(page);
 }
+
+
+static unsigned long hugetlb_cma_size __initdata;
+static unsigned long hugetlb_cma_percent __initdata;
+
+static int __init cmdline_parse_hugetlb_cma(char *p)
+{
+	unsigned long long val;
+	char *endptr;
+
+	if (!p)
+		return -EINVAL;
+
+	/* Value may be a percentage of total memory, otherwise bytes */
+	val = simple_strtoull(p, &endptr, 0);
+	if (*endptr == '%')
+		hugetlb_cma_percent = clamp_t(unsigned long, val, 0, 100);
+	else
+		hugetlb_cma_size = memparse(p, &p);
+
+	return 0;
+}
+
+
+/* full patch ported from https://lkml.org/lkml/2020/3/9/1135 */
+early_param("hugetlb_cma", cmdline_parse_hugetlb_cma);
+
+void __init hugetlb_cma_reserve(void)
+{
+	unsigned long totalpages = 0;
+	unsigned long start_pfn, end_pfn;
+	phys_addr_t size;
+	int nid, i, res;
+
+	if (!hugetlb_cma_size && !hugetlb_cma_percent)
+		return;
+
+	if (hugetlb_cma_percent) {
+		for_each_mem_pfn_range(i, MAX_NUMNODES, &start_pfn, &end_pfn, NULL)
+			totalpages += end_pfn - start_pfn;
+
+		size = PAGE_SIZE * (hugetlb_cma_percent * 100 * totalpages) /
+			10000UL;
+	} else {
+		size = hugetlb_cma_size;
+	}
+
+	pr_info("hugetlb_cma: reserve %llu, %llu per node\n", size,
+		size / nr_online_nodes);
+
+	size /= nr_online_nodes;
+
+	for_each_node_state(nid, N_ONLINE) {
+		unsigned long min_pfn = 0, max_pfn = 0;
+
+		for_each_mem_pfn_range(i, nid, &start_pfn, &end_pfn, NULL) {
+			if (!min_pfn)
+				min_pfn = start_pfn;
+			max_pfn = end_pfn;
+		}
+
+		res = cma_declare_contiguous(PFN_PHYS(min_pfn), size,
+					     PFN_PHYS(max_pfn), (1UL << 30),
+					     0, false,
+					     "hugetlb", &hugetlb_cma[nid]);
+		if (res) {
+			pr_warn("hugetlb_cma: reservation failed: err %d, node %d, [%llu, %llu)",
+				res, nid, PFN_PHYS(min_pfn), PFN_PHYS(max_pfn));
+
+			for (; nid >= 0; nid--)
+				hugetlb_cma[nid] = NULL;
+
+			break;
+		}
+
+		pr_info("hugetlb_cma: successfully reserved %llu on node %d\n",
+			size, nid);
+	}
+}
+

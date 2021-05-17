@@ -133,6 +133,8 @@ extern int hugepages_treat_as_movable;
 extern int sysctl_hugetlb_shm_group;
 extern struct list_head huge_boot_pages;
 
+extern void __init hugetlb_cma_reserve(void);
+
 /* arch callbacks */
 
 pte_t *huge_pte_alloc(struct mm_struct *mm,

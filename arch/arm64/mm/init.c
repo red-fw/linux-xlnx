@@ -40,6 +40,7 @@
 #include <linux/mm.h>
 #include <linux/kexec.h>
 #include <linux/crash_dump.h>
+#include <linux/hugetlb.h>
 
 #include <asm/boot.h>
 #include <asm/fixmap.h>
@@ -477,6 +478,8 @@ void __init arm64_memblock_init(void)
 	reserve_elfcorehdr();
 
 	dma_contiguous_reserve(arm64_dma_phys_limit);
+
+	hugetlb_cma_reserve();
 
 	memblock_allow_resize();
 }
