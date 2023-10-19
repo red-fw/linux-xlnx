@@ -58,6 +58,7 @@
 #define PCFG_PAD_VAL	0x2
 
 #define PPCFG_TTA	0x1FFFE
+#define PPCFG_SNR_EN	(1 << 18)
 #define PPCFG_PSSO_EN	(1 << 28)
 #define PPCFG_PSS_EN	(1 << 29)
 #define PPCFG_ESDF_EN	(1 << 31)
@@ -82,6 +83,7 @@
 #define NR_PORTS	2
 #define DRV_NAME	"ahci-ceva"
 #define CEVA_FLAG_BROKEN_GEN2	1
+#define CEVA_FLAG_PPCFG_SNR_EN	2
 
 static unsigned int rx_watermark = PTC_RX_WM_VAL;
 module_param(rx_watermark, uint, 0);
@@ -168,6 +170,8 @@ static void ahci_ceva_setup(struct ahci_host_priv *hpriv)
 
 		/* Port Phy Cfg register enables */
 		tmp = PPCFG_TTA | PPCFG_PSS_EN | PPCFG_ESDF_EN;
+		if (cevapriv->flags & CEVA_FLAG_PPCFG_SNR_EN)
+			tmp |= PPCFG_SNR_EN;
 		writel(tmp, mmio + AHCI_VEND_PPCFG);
 
 		/* Phy Control OOB timing parameters COMINIT */
@@ -222,7 +226,7 @@ static int ceva_ahci_probe(struct platform_device *pdev)
 		return rc;
 
 	if (of_property_read_bool(np, "ceva,broken-gen2"))
-		cevapriv->flags = CEVA_FLAG_BROKEN_GEN2;
+		cevapriv->flags |= CEVA_FLAG_BROKEN_GEN2;
 
 	/* Read OOB timing value for COMINIT from device-tree */
 	if (of_property_read_u8_array(np, "ceva,p0-cominit-params",
@@ -275,6 +279,9 @@ static int ceva_ahci_probe(struct platform_device *pdev)
 		dev_warn(dev, "ceva,p1-retry-params property not defined\n");
 		return -EINVAL;
 	}
+	
+	if (of_property_read_bool(np, "ceva,ppcfg-snr-en"))
+		cevapriv->flags |= CEVA_FLAG_PPCFG_SNR_EN;
 
 	/*
 	 * Check if CCI is enabled for SATA. The DEV_DMA_COHERENT is returned

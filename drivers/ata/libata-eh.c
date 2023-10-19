@@ -75,7 +75,7 @@ enum {
 	ATA_EH_CMD_DFL_TIMEOUT		=  5000,
 
 	/* always put at least this amount of time between resets */
-	ATA_EH_RESET_COOL_DOWN		=  5000,
+	ATA_EH_RESET_COOL_DOWN		=  250,
 
 	/* Waiting in ->prereset can never be reliable.  It's
 	 * sometimes nice to wait there but it can't be depended upon;

@@ -22,6 +22,12 @@
 
 #include <linux/w1.h>
 
+static int w1_gpio_master_id(void *data)
+{
+	struct w1_gpio_platform_data *pdata = data;
+	return pdata->master_id;
+}
+
 static u8 w1_gpio_set_pullup(void *data, int delay)
 {
 	struct w1_gpio_platform_data *pdata = data;
@@ -79,6 +85,8 @@ static int w1_gpio_probe_dt(struct platform_device *pdev)
 	struct w1_gpio_platform_data *pdata = dev_get_platdata(&pdev->dev);
 	struct device_node *np = pdev->dev.of_node;
 	int gpio;
+	const __be32 *master_id;
+	int size;
 
 	pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
@@ -103,6 +111,13 @@ static int w1_gpio_probe_dt(struct platform_device *pdev)
 		return gpio;
 	/* ignore other errors as the pullup gpio is optional */
 	pdata->ext_pullup_enable_pin = gpio;
+
+	master_id = of_get_property(np, "master-id", &size);
+	if (master_id && size == sizeof(*master_id) && *master_id)
+	{
+		pdata->master_id = be32_to_cpup(master_id);
+		dev_info(&pdev->dev, "master-id set to %d for gpio %d.\n", pdata->master_id, gpio);
+	}
 
 	pdev->dev.platform_data = pdata;
 
@@ -162,6 +177,11 @@ static int w1_gpio_probe(struct platform_device *pdev)
 		gpio_direction_input(pdata->pin);
 		master->write_bit = w1_gpio_write_bit_dir;
 		master->set_pullup = w1_gpio_set_pullup;
+	}
+
+	if(pdata->master_id > 0)
+	{
+		master->master_id = w1_gpio_master_id;
 	}
 
 	err = w1_add_master_device(master);

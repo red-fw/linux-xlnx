@@ -27,6 +27,7 @@
 #include <linux/usb/cdc.h>
 #include <linux/suspend.h>
 #include <linux/acpi.h>
+#include <linux/ethtool.h>
 
 /* Information for net-next */
 #define NETNEXT_VERSION		"09"
@@ -4887,6 +4888,7 @@ static const struct ethtool_ops ops = {
 	.set_coalesce = rtl8152_set_coalesce,
 	.get_eee = rtl_ethtool_get_eee,
 	.set_eee = rtl_ethtool_set_eee,
+	.get_ts_info = ethtool_op_get_ts_info,
 	.get_link_ksettings = rtl8152_get_link_ksettings,
 	.set_link_ksettings = rtl8152_set_link_ksettings,
 };

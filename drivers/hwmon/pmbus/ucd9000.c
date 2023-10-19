@@ -27,6 +27,8 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/pmbus.h>
+#include <linux/sysfs.h>
+#include <linux/hwmon-sysfs.h>
 #include "pmbus.h"
 
 enum chips { ucd9000, ucd90120, ucd90124, ucd90160, ucd9090, ucd90910 };
@@ -52,6 +54,32 @@ struct ucd9000_data {
 	struct pmbus_driver_info info;
 };
 #define to_ucd9000_data(_info) container_of(_info, struct ucd9000_data, info)
+
+static ssize_t ucd9000_clear_pmbus_cache(struct device *dev,
+				struct device_attribute *devattr,
+				const char *buf, size_t count)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	pmbus_clear_cache(client);
+	return 1;
+}
+
+static DEVICE_ATTR(clear_pmbus_cache, S_IWUSR, NULL,
+		ucd9000_clear_pmbus_cache);
+
+static struct attribute *ucd9000_attrs[] = {
+	&dev_attr_clear_pmbus_cache.attr,
+	NULL,
+};
+
+static const struct attribute_group ucd9000_group = {
+	.attrs = ucd9000_attrs,
+};
+
+static const struct attribute_group *attribute_groups[] = {
+	&ucd9000_group,
+	NULL,
+};
 
 static int ucd9000_get_fan_config(struct i2c_client *client, int fan)
 {
@@ -262,6 +290,8 @@ static int ucd9000_probe(struct i2c_client *client,
 		info->func[0] |= PMBUS_HAVE_FAN12 | PMBUS_HAVE_STATUS_FAN12
 		  | PMBUS_HAVE_FAN34 | PMBUS_HAVE_STATUS_FAN34;
 	}
+
+	info->groups = attribute_groups;
 
 	return pmbus_do_probe(client, mid, info);
 }

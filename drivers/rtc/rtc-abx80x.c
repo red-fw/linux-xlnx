@@ -80,6 +80,7 @@ enum abx80x_chip {AB0801, AB0803, AB0804, AB0805,
 struct abx80x_cap {
 	u16 pn;
 	bool has_tc;
+	bool ignore_oss_of_error;
 };
 
 static struct abx80x_cap abx80x_caps[] = {
@@ -90,8 +91,14 @@ static struct abx80x_cap abx80x_caps[] = {
 	[AB1801] = {.pn = 0x1801},
 	[AB1803] = {.pn = 0x1803},
 	[AB1804] = {.pn = 0x1804, .has_tc = true},
-	[AB1805] = {.pn = 0x1805, .has_tc = true},
+	[AB1805] = {.pn = 0x1805, .has_tc = true, .ignore_oss_of_error = true},
 	[ABX80X] = {.pn = 0}
+};
+
+struct abx80x_priv {
+	struct rtc_device *rtc;
+	struct i2c_client *client;
+	struct abx80x_cap *cap;
 };
 
 static int abx80x_is_rc_mode(struct i2c_client *client)
@@ -138,8 +145,10 @@ static int abx80x_enable_trickle_charger(struct i2c_client *client,
 static int abx80x_rtc_read_time(struct device *dev, struct rtc_time *tm)
 {
 	struct i2c_client *client = to_i2c_client(dev);
+	struct abx80x_priv *priv = i2c_get_clientdata(client);
 	unsigned char buf[8];
 	int err, flags, rc_mode = 0;
+	bool log_date_time_regs = false;
 
 	/* Read the Oscillator Failure only in XT mode */
 	rc_mode = abx80x_is_rc_mode(client);
@@ -152,8 +161,16 @@ static int abx80x_rtc_read_time(struct device *dev, struct rtc_time *tm)
 			return flags;
 
 		if (flags & ABX8XX_OSS_OF) {
-			dev_err(dev, "Oscillator failure, data is invalid.\n");
-			return -EINVAL;
+			if (priv->cap->ignore_oss_of_error)
+			{
+				dev_warn(dev, "Oscillator failure. Time may have slipped.\n");
+				log_date_time_regs = true;
+			}
+			else
+			{
+				dev_err(dev, "Oscillator failure, data is invalid.\n");
+				return -EINVAL;
+			}
 		}
 	}
 
@@ -171,6 +188,18 @@ static int abx80x_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	tm->tm_mday = bcd2bin(buf[ABX8XX_REG_DA] & 0x3F);
 	tm->tm_mon = bcd2bin(buf[ABX8XX_REG_MO] & 0x1F) - 1;
 	tm->tm_year = bcd2bin(buf[ABX8XX_REG_YR]) + 100;
+
+	if (log_date_time_regs)
+	{
+		dev_info(dev, "tm_sec:%d, tm_min:%d, tm_hour:%d, tm_wday:%d, tm_mday:%d, tm_mon:%d, tm_year:%d\n",
+				tm->tm_sec,
+				tm->tm_min,
+				tm->tm_hour,
+				tm->tm_wday,
+				tm->tm_mday,
+				tm->tm_mon,
+				tm->tm_year);
+	}
 
 	err = rtc_valid_tm(tm);
 	if (err < 0)
@@ -222,7 +251,8 @@ static int abx80x_rtc_set_time(struct device *dev, struct rtc_time *tm)
 static irqreturn_t abx80x_handle_irq(int irq, void *dev_id)
 {
 	struct i2c_client *client = dev_id;
-	struct rtc_device *rtc = i2c_get_clientdata(client);
+	struct abx80x_priv *priv = i2c_get_clientdata(client);
+	struct rtc_device *rtc = priv->rtc;
 	int status;
 
 	status = i2c_smbus_read_byte_data(client, ABX8XX_REG_STATUS);
@@ -537,7 +567,7 @@ static int abx80x_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
 	struct device_node *np = client->dev.of_node;
-	struct rtc_device *rtc;
+	struct abx80x_priv *priv;
 	int i, data, err, trickle_cfg = -EINVAL;
 	char buf[7];
 	unsigned int part = id->driver_data;
@@ -600,6 +630,11 @@ static int abx80x_probe(struct i2c_client *client,
 		return -EINVAL;
 	}
 
+	if (abx80x_caps[part].ignore_oss_of_error)
+	{
+		dev_info(&client->dev, "This is a modified driver which will read the date/time registers after an OSS OF error.\n");
+	}
+
 	if (np && abx80x_caps[part].has_tc)
 		trickle_cfg = abx80x_dt_trickle_cfg(np);
 
@@ -614,13 +649,19 @@ static int abx80x_probe(struct i2c_client *client,
 	if (err)
 		return err;
 
-	rtc = devm_rtc_device_register(&client->dev, "abx8xx",
-				       &abx80x_rtc_ops, THIS_MODULE);
+	priv = devm_kzalloc(&client->dev, sizeof(*priv), GFP_KERNEL);
+	if (priv == NULL)
+		return -ENOMEM;
 
-	if (IS_ERR(rtc))
-		return PTR_ERR(rtc);
+	priv->client = client;
+	priv->cap = &abx80x_caps[part];
+	i2c_set_clientdata(client, priv);
 
-	i2c_set_clientdata(client, rtc);
+	priv->rtc = devm_rtc_device_register(&client->dev, "abx8xx",
+			&abx80x_rtc_ops, THIS_MODULE);
+
+	if (IS_ERR(priv->rtc))
+		return PTR_ERR(priv->rtc);
 
 	if (client->irq > 0) {
 		dev_info(&client->dev, "IRQ %d supplied\n", client->irq);
