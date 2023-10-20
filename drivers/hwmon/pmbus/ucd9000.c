@@ -214,15 +214,15 @@ static void ucd9000_gpio_set(struct gpio_chip *gc, unsigned int offset,
 	}
 
 	if (value) {
-		if (ret & UCD9000_GPIO_CONFIG_STATUS)
+		if (ret & UCD9000_GPIO_CONFIG_OUT_VALUE)
 			return;
 
-		ret |= UCD9000_GPIO_CONFIG_STATUS;
+		ret |= UCD9000_GPIO_CONFIG_OUT_VALUE;
 	} else {
-		if (!(ret & UCD9000_GPIO_CONFIG_STATUS))
+		if (!(ret & UCD9000_GPIO_CONFIG_OUT_VALUE))
 			return;
 
-		ret &= ~UCD9000_GPIO_CONFIG_STATUS;
+		ret &= ~UCD9000_GPIO_CONFIG_OUT_VALUE;
 	}
 
 	ret |= UCD9000_GPIO_CONFIG_ENABLE;
@@ -234,13 +234,6 @@ static void ucd9000_gpio_set(struct gpio_chip *gc, unsigned int offset,
 			offset, ret);
 		return;
 	}
-
-	ret &= ~UCD9000_GPIO_CONFIG_ENABLE;
-
-	ret = i2c_smbus_write_byte_data(client, UCD9000_GPIO_CONFIG, ret);
-	if (ret < 0)
-		dev_dbg(&client->dev, "Failed to write GPIO %d config: %d\n",
-			offset, ret);
 }
 
 static int ucd9000_gpio_get_direction(struct gpio_chip *gc,
@@ -293,12 +286,6 @@ static int ucd9000_gpio_set_direction(struct gpio_chip *gc,
 	config = ret;
 
 	/* Page set not required */
-	ret = i2c_smbus_write_byte_data(client, UCD9000_GPIO_CONFIG, config);
-	if (ret < 0)
-		return ret;
-
-	config &= ~UCD9000_GPIO_CONFIG_ENABLE;
-
 	return i2c_smbus_write_byte_data(client, UCD9000_GPIO_CONFIG, config);
 }
 

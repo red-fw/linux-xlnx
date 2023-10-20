@@ -484,6 +484,7 @@ int can_put_echo_skb(struct sk_buff *skb, struct net_device *dev,
 
 		/* save this skb for tx interrupt echo handling */
 		priv->echo_skb[idx] = skb;
+		skb_tx_timestamp(skb);
 	} else {
 		/* locking problem with netif_stop_queue() ?? */
 		netdev_err(dev, "%s: BUG! echo_skb %d is occupied!\n", __func__, idx);

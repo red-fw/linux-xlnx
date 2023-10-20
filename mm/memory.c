@@ -5113,6 +5113,7 @@ static void clear_subpage(unsigned long addr, int idx, void *arg)
 void clear_huge_page(struct page *page,
 		     unsigned long addr_hint, unsigned int pages_per_huge_page)
 {
+#if 0
 	unsigned long addr = addr_hint &
 		~(((unsigned long)pages_per_huge_page << PAGE_SHIFT) - 1);
 
@@ -5122,6 +5123,7 @@ void clear_huge_page(struct page *page,
 	}
 
 	process_huge_page(addr_hint, pages_per_huge_page, clear_subpage, page);
+#endif
 }
 
 static void copy_user_gigantic_page(struct page *dst, struct page *src,

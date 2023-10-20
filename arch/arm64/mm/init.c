@@ -271,6 +271,9 @@ void __init arm64_memblock_init(void)
 {
 	const s64 linear_region_size = BIT(vabits_actual - 1);
 
+	/* Default to bottom up allocation to allow max number of hugepages @ boot */
+	memblock_set_bottom_up(true);
+
 	/* Handle linux,usable-memory-range property */
 	fdt_enforce_memory_region();
 

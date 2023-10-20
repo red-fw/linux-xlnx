@@ -2839,7 +2839,8 @@ static int xilinx_dma_chan_probe(struct xilinx_dma_device *xdev,
 			  IRQF_SHARED, "xilinx-dma-controller", chan);
 	if (err) {
 		dev_err(xdev->dev, "unable to request IRQ %d\n", chan->irq);
-		return err;
+                dev_warn(xdev->dev, "IRQ is routed thru PL logic\n");
+		//return err;
 	}
 
 	if (xdev->dma_config->dmatype == XDMA_TYPE_AXIDMA) {

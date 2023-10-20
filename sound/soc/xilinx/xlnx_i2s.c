@@ -47,6 +47,7 @@ static int xlnx_i2s_hw_params(struct snd_pcm_substream *substream,
 			      struct snd_pcm_hw_params *params,
 			      struct snd_soc_dai *i2s_dai)
 {
+#if 0
 	u32 reg_off, chan_id;
 	struct xlnx_i2s_dev_data *dev_data = snd_soc_dai_get_drvdata(i2s_dai);
 
@@ -57,7 +58,7 @@ static int xlnx_i2s_hw_params(struct snd_pcm_substream *substream,
 		writel(chan_id, dev_data->base + reg_off);
 		chan_id--;
 	}
-
+#endif
 	return 0;
 }
 
@@ -75,7 +76,7 @@ static int xlnx_i2s_trigger(struct snd_pcm_substream *substream, int cmd,
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-		writel(0, dev_data->base + I2S_CORE_CTRL_OFFSET);
+		//writel(0, dev_data->base + I2S_CORE_CTRL_OFFSET);
 		break;
 	default:
 		return -EINVAL;
@@ -152,7 +153,7 @@ static int xlnx_i2s_probe(struct platform_device *pdev)
 		dai_drv->name = "xlnx_i2s_playback";
 		dai_drv->playback.stream_name = "Playback";
 		dai_drv->playback.formats = format;
-		dai_drv->playback.channels_min = ch;
+		dai_drv->playback.channels_min = 2;
 		dai_drv->playback.channels_max = ch;
 		dai_drv->playback.rates	= SNDRV_PCM_RATE_8000_192000;
 		dai_drv->ops = &xlnx_i2s_dai_ops;
@@ -169,7 +170,7 @@ static int xlnx_i2s_probe(struct platform_device *pdev)
 		dai_drv->name = "xlnx_i2s_capture";
 		dai_drv->capture.stream_name = "Capture";
 		dai_drv->capture.formats = format;
-		dai_drv->capture.channels_min = ch;
+		dai_drv->capture.channels_min = 2;
 		dai_drv->capture.channels_max = ch;
 		dai_drv->capture.rates = SNDRV_PCM_RATE_8000_192000;
 		dai_drv->ops = &xlnx_i2s_dai_ops;

@@ -669,7 +669,7 @@ static int zynqmp_r5_setup_mbox(struct zynqmp_r5_rproc *z_rproc,
 	/* Setup TX mailbox channel client */
 	mclient = &z_rproc->tx_mc;
 	mclient->rx_callback = NULL;
-	mclient->tx_block = false;
+	mclient->tx_block = true;
 	mclient->knows_txdone = false;
 	mclient->tx_done = zynqmp_r5_mb_tx_done;
 	mclient->dev = z_rproc->dev;

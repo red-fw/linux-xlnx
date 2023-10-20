@@ -41,6 +41,17 @@
 #define NVME_MAX_KB_SZ	4096
 #define NVME_MAX_SEGS	127
 
+/* On our system, accessing dev->bar with no device present results in a kernel hang
+ * or crash. Defining DISABLE_BAR_ACCESS_ON_REMOVE prevents this access
+ */
+#define DISABLE_BAR_ACCESS_ON_REMOVE
+#define PLATFORM_SPECIFIC_CARD_DETECT
+
+#ifdef PLATFORM_SPECIFIC_CARD_DETECT
+#define CARD_STATUS_REG		(0xa1240070)
+#define CARD_PRESENT_N_MASK	(1 << 16)
+#endif
+
 static int use_threaded_interrupts;
 module_param(use_threaded_interrupts, int, 0);
 
@@ -153,6 +164,16 @@ struct nvme_dev {
 	unsigned int nr_write_queues;
 	unsigned int nr_poll_queues;
 };
+
+#ifdef PLATFORM_SPECIFIC_CARD_DETECT
+static bool card_present(void)
+{
+	void __iomem *regs = ioremap(CARD_STATUS_REG, 4);
+	u32 card_status = ioread32(regs);
+	iounmap(regs);
+	return ((card_status & CARD_PRESENT_N_MASK) != CARD_PRESENT_N_MASK);
+}
+#endif
 
 static int io_queue_depth_set(const char *val, const struct kernel_param *kp)
 {
@@ -889,10 +910,15 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct nvme_command cmnd;
 	blk_status_t ret;
+	u32 card_inserted = true;
 
 	iod->aborted = 0;
 	iod->npages = -1;
 	iod->nents = 0;
+
+#ifdef PLATFORM_SPECIFIC_CARD_DETECT
+	card_inserted = card_present();
+#endif
 
 	/*
 	 * We should not need to do this, but we're still using this to
@@ -900,6 +926,11 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	 */
 	if (unlikely(!test_bit(NVMEQ_ENABLED, &nvmeq->flags)))
 		return BLK_STS_IOERR;
+
+	if (!card_inserted)
+	{
+		return BLK_STS_IOERR;
+	}
 
 	ret = nvme_setup_cmd(ns, req, &cmnd);
 	if (ret)
@@ -1230,7 +1261,17 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req, bool reserved)
 	struct nvme_dev *dev = nvmeq->dev;
 	struct request *abort_req;
 	struct nvme_command cmd;
-	u32 csts = readl(dev->bar + NVME_REG_CSTS);
+	u32 card_inserted = true;
+	u32 csts;
+
+#ifdef PLATFORM_SPECIFIC_CARD_DETECT
+	card_inserted = card_present();
+#endif
+
+	if (card_inserted)
+	{
+		csts = readl(dev->bar + NVME_REG_CSTS);
+	}
 
 	/* If PCI error recovery process is happening, we cannot reset or
 	 * the recovery mechanism will surely fail.
@@ -1242,7 +1283,12 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req, bool reserved)
 	/*
 	 * Reset immediately if the controller is failed
 	 */
-	if (nvme_should_reset(dev, csts)) {
+	if (!card_inserted) {
+		dev_info(dev->ctrl.device, "detected no card present...\n");
+		nvme_dev_disable(dev, false);
+		nvme_reset_ctrl(&dev->ctrl);
+		return BLK_EH_DONE;
+	} else if (nvme_should_reset(dev, csts)) {
 		nvme_warn_reset(dev, csts);
 		nvme_dev_disable(dev, false);
 		nvme_reset_ctrl(&dev->ctrl);
@@ -2332,6 +2378,14 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 	if (dma_set_mask_and_coherent(dev->dev, DMA_BIT_MASK(64)))
 		goto disable;
 
+#ifdef PLATFORM_SPECIFIC_CARD_DETECT
+	if (!card_present())
+	{
+		result = -ENODEV;
+		goto disable;
+	}
+#endif
+
 	if (readl(dev->bar + NVME_REG_CSTS) == -1) {
 		result = -ENODEV;
 		goto disable;
@@ -2427,9 +2481,16 @@ static void nvme_dev_disable(struct nvme_dev *dev, bool shutdown)
 {
 	bool dead = true, freeze = false;
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
+	u32 card_inserted = true;
 
 	mutex_lock(&dev->shutdown_lock);
-	if (pci_is_enabled(pdev)) {
+
+#ifdef PLATFORM_SPECIFIC_CARD_DETECT
+	card_inserted = card_present();
+#endif
+
+#ifndef DISABLE_BAR_ACCESS_ON_REMOVE
+	if (pci_is_enabled(pdev) && card_inserted) {
 		u32 csts = readl(dev->bar + NVME_REG_CSTS);
 
 		if (dev->ctrl.state == NVME_CTRL_LIVE ||
@@ -2440,12 +2501,13 @@ static void nvme_dev_disable(struct nvme_dev *dev, bool shutdown)
 		dead = !!((csts & NVME_CSTS_CFS) || !(csts & NVME_CSTS_RDY) ||
 			pdev->error_state  != pci_channel_io_normal);
 	}
+#endif
 
 	/*
 	 * Give the controller a chance to complete all entered requests if
 	 * doing a safe shutdown.
 	 */
-	if (!dead && shutdown && freeze)
+	if (!dead && shutdown && freeze && card_inserted)
 		nvme_wait_freeze_timeout(&dev->ctrl, NVME_IO_TIMEOUT);
 
 	nvme_stop_queues(&dev->ctrl);

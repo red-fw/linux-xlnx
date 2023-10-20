@@ -25,7 +25,7 @@
 #define PTN5150_REG_CC_STATUS			0x04
 #define PTN5150_REG_CON_DET			0x09
 #define PTN5150_REG_VCONN_STATUS		0x0a
-#define PTN5150_REG_RESET			0x0b
+#define PTN5150_REG_RESET			0x10
 #define PTN5150_REG_INT_MASK			0x18
 #define PTN5150_REG_INT_REG_STATUS		0x19
 #define PTN5150_REG_END				PTN5150_REG_INT_REG_STATUS
@@ -283,6 +283,12 @@ static int ptn5150_i2c_probe(struct i2c_client *i2c)
 	ret = ptn5150_init_dev_type(info);
 	if (ret)
 		return -EINVAL;
+
+	/* Reset PTN5150 device */
+	ret = regmap_write(info->regmap, PTN5150_REG_RESET, 0x01);
+	if (ret) {
+		dev_err(info->dev, "failed to write REG RESET %d\n", ret);
+	}
 
 	/*
 	 * Update current extcon state if for example OTG connection was there

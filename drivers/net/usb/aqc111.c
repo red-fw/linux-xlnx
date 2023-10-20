@@ -414,6 +414,7 @@ static const struct ethtool_ops aqc111_ethtool_ops = {
 	.get_msglevel = usbnet_get_msglevel,
 	.set_msglevel = usbnet_set_msglevel,
 	.get_link = ethtool_op_get_link,
+	.get_ts_info = ethtool_op_get_ts_info,
 	.get_link_ksettings = aqc111_get_link_ksettings,
 	.set_link_ksettings = aqc111_set_link_ksettings
 };
