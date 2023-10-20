@@ -155,6 +155,7 @@ struct w1_bus_master {
 		u8, w1_slave_found_callback);
 
 	char		*dev_id;
+    int         (*master_id)(void *);
 };
 
 /**

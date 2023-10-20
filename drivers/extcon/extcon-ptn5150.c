@@ -24,7 +24,7 @@ enum ptn5150_reg {
 	PTN5150_REG_CC_STATUS,
 	PTN5150_REG_CON_DET = 0x09,
 	PTN5150_REG_VCONN_STATUS,
-	PTN5150_REG_RESET,
+	PTN5150_REG_RESET = 0x10,
 	PTN5150_REG_INT_MASK = 0x18,
 	PTN5150_REG_INT_REG_STATUS,
 	PTN5150_REG_END,
@@ -127,7 +127,7 @@ static void ptn5150_irq_work(struct work_struct *work)
 			case PTN5150_DFP_ATTACHED:
 				extcon_set_state_sync(info->edev,
 						EXTCON_USB_HOST, false);
-				gpiod_set_value(info->vbus_gpiod, 0);
+				gpiod_set_value_cansleep(info->vbus_gpiod, 0);
 				extcon_set_state_sync(info->edev, EXTCON_USB,
 						true);
 				break;
@@ -138,9 +138,9 @@ static void ptn5150_irq_work(struct work_struct *work)
 					PTN5150_REG_CC_VBUS_DETECTION_MASK) >>
 					PTN5150_REG_CC_VBUS_DETECTION_SHIFT);
 				if (vbus)
-					gpiod_set_value(info->vbus_gpiod, 0);
+					gpiod_set_value_cansleep(info->vbus_gpiod, 0);
 				else
-					gpiod_set_value(info->vbus_gpiod, 1);
+					gpiod_set_value_cansleep(info->vbus_gpiod, 1);
 
 				extcon_set_state_sync(info->edev,
 						EXTCON_USB_HOST, true);
@@ -239,15 +239,17 @@ static int ptn5150_i2c_probe(struct i2c_client *i2c,
 
 	info->dev = &i2c->dev;
 	info->i2c = i2c;
-	info->int_gpiod = devm_gpiod_get(&i2c->dev, "int", GPIOD_IN);
-	if (IS_ERR(info->int_gpiod)) {
-		dev_err(dev, "failed to get INT GPIO\n");
-		return PTR_ERR(info->int_gpiod);
-	}
+
 	info->vbus_gpiod = devm_gpiod_get(&i2c->dev, "vbus", GPIOD_IN);
 	if (IS_ERR(info->vbus_gpiod)) {
-		dev_err(dev, "failed to get VBUS GPIO\n");
-		return PTR_ERR(info->vbus_gpiod);
+		ret = PTR_ERR(info->vbus_gpiod);
+		if (ret == -ENOENT) {
+			dev_info(dev, "No VBUS GPIO, ignoring VBUS control\n");
+			info->vbus_gpiod = NULL;
+		} else {
+			dev_err(dev, "failed to get VBUS GPIO\n");
+			return ret;
+		}
 	}
 	ret = gpiod_direction_output(info->vbus_gpiod, 0);
 	if (ret) {
@@ -267,22 +269,31 @@ static int ptn5150_i2c_probe(struct i2c_client *i2c,
 		return ret;
 	}
 
-	if (info->int_gpiod) {
+	if (i2c->irq > 0) {
+		info->irq = i2c->irq;
+	} else {
+		info->int_gpiod = devm_gpiod_get(&i2c->dev, "int", GPIOD_IN);
+		if (IS_ERR(info->int_gpiod)) {
+			dev_err(dev, "failed to get INT GPIO\n");
+			return PTR_ERR(info->int_gpiod);
+		}
+
 		info->irq = gpiod_to_irq(info->int_gpiod);
 		if (info->irq < 0) {
 			dev_err(dev, "failed to get INTB IRQ\n");
 			return info->irq;
 		}
+	}
 
-		ret = devm_request_threaded_irq(dev, info->irq, NULL,
-						ptn5150_irq_handler,
-						IRQF_TRIGGER_FALLING |
-						IRQF_ONESHOT,
-						i2c->name, info);
-		if (ret < 0) {
-			dev_err(dev, "failed to request handler for INTB IRQ\n");
-			return ret;
-		}
+	ret = devm_request_threaded_irq(dev, info->irq, NULL,
+					ptn5150_irq_handler,
+					IRQF_TRIGGER_FALLING |
+					IRQF_ONESHOT,
+					i2c->name, info);
+	if (ret < 0) {
+		dev_err(dev, "failed to request handler for INTB IRQ\n");
+		return ret;
+
 	}
 
 	/* Allocate extcon device */
@@ -303,6 +314,12 @@ static int ptn5150_i2c_probe(struct i2c_client *i2c,
 	ret = ptn5150_init_dev_type(info);
 	if (ret)
 		return -EINVAL;
+
+	/* Reset PTN5150 device */
+	ret = regmap_write(info->regmap, PTN5150_REG_RESET, 0x01);
+	if (ret) {
+		dev_err(info->dev, "failed to write REG RESET %d\n", ret);
+	}
 
 	return 0;
 }

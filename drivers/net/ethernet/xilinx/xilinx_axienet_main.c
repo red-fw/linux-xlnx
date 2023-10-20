@@ -45,6 +45,7 @@
 #include <net/sock.h>
 #include <linux/xilinx_phy.h>
 #include <linux/clk.h>
+#include <linux/tcp.h>
 
 #include "xilinx_axienet.h"
 
@@ -148,6 +149,19 @@ static struct xxvenet_option xxvenet_options[] = {
 		.m_or = XXV_RCW1_RX_MASK,
 	},
 	{}
+};
+
+struct axienet_ethtools_stat {
+	const char *name;
+};
+
+static struct axienet_ethtools_stat axienet_get_ethtools_strings_stats[] = {
+	{ "tx_packets" },
+	{ "rx_packets" },
+	{ "tx_bytes" },
+	{ "rx_bytes" },
+	{ "tx_errors" },
+	{ "rx_errors" },
 };
 
 /**
@@ -617,15 +631,23 @@ void axienet_tx_hwtstamp(struct axienet_local *lp,
 	if (unlikely(!(val & XAXIFIFO_TXTS_INT_RC_MASK)))
 		dev_info(lp->dev, "Did't get FIFO tx interrupt %d\n", val);
 
+	/* Ensure to read Occupany register before accessing Length register */
+	if (!axienet_txts_ior(lp, XAXIFIFO_TXTS_RFO)) {
+		netdev_err(lp->ndev, "%s: TX Timestamp FIFO is empty", __func__);
+		goto skb_exit;
+	}
+
 	/* If FIFO is configured in cut through Mode we will get Rx complete
 	 * interrupt even one byte is there in the fifo wait for the full packet
 	 */
 	err = readl_poll_timeout_atomic(lp->tx_ts_regs + XAXIFIFO_TXTS_RLR, val,
 					((val & XAXIFIFO_TXTS_RXFD_MASK) >=
 					len), 0, 1000000);
-	if (err)
+	if (err) {
 		netdev_err(lp->ndev, "%s: Didn't get the full timestamp packet",
 			   __func__);
+		goto skb_exit;
+	}
 
 	nsec = axienet_txts_ior(lp, XAXIFIFO_TXTS_RXFD);
 	sec  = axienet_txts_ior(lp, XAXIFIFO_TXTS_RXFD);
@@ -660,6 +682,7 @@ void axienet_tx_hwtstamp(struct axienet_local *lp,
 	if (lp->axienet_config->mactype != XAXIENET_10G_25G)
 		val = axienet_txts_ior(lp, XAXIFIFO_TXTS_RXFD);
 
+skb_exit:
 	time64 = sec * NS_PER_SEC + nsec;
 	memset(shhwtstamps, 0, sizeof(struct skb_shared_hwtstamps));
 	shhwtstamps->hwtstamp = ns_to_ktime(time64);
@@ -774,6 +797,7 @@ void axienet_start_xmit_done(struct net_device *ndev,
 		cur_p->app0 = 0;
 		cur_p->app1 = 0;
 		cur_p->app2 = 0;
+		cur_p->app3 = 0;
 		cur_p->app4 = 0;
 		cur_p->status = 0;
 		cur_p->tx_skb = 0;
@@ -1127,7 +1151,8 @@ static int axienet_queue_xmit(struct sk_buff *skb,
 #endif
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL && !lp->eth_hasnobuf &&
-	    (lp->axienet_config->mactype == XAXIENET_1G)) {
+	    (lp->axienet_config->mactype == XAXIENET_1G ||
+		lp->axienet_config->mactype == XAXIENET_10G_25G)) {
 		if (lp->features & XAE_FEATURE_FULL_TX_CSUM) {
 			/* Tx Full Checksum Offload Enabled */
 			cur_p->app0 |= 2;
@@ -1140,8 +1165,32 @@ static int axienet_queue_xmit(struct sk_buff *skb,
 		}
 	} else if (skb->ip_summed == CHECKSUM_UNNECESSARY &&
 		   !lp->eth_hasnobuf &&
-		   (lp->axienet_config->mactype == XAXIENET_1G)) {
+		   (lp->axienet_config->mactype == XAXIENET_1G ||
+			lp->axienet_config->mactype == XAXIENET_10G_25G)) {
 		cur_p->app0 |= 2; /* Tx Full Checksum Offload Enabled */
+	}
+
+	if (unlikely(skb_is_gso(skb)) && lp->axienet_config->mactype == XAXIENET_10G_25G) {
+//		dev_info(&ndev->dev, "GSO Packet length %d, Fragments = %d, has_dre = %d\n",
+//					skb->len, num_frag, q->eth_hasdre);
+
+		if ( unlikely(ip_hdr(skb)->version != 4) )
+		{
+			WARN_ONCE(true, "Only IPv4 is supported at this time");
+		}
+		else if ( unlikely(ip_hdr(skb)->protocol == IPPROTO_UDP) )
+		{
+			WARN_ONCE(true, "Only IPv4 UDP is supported at this time");
+		}
+		else
+		{
+			cur_p->app0 |= 4;
+			cur_p->app0 |= XAE_HDR_SIZE << 8;
+			cur_p->app0 |= skb_network_header_len(skb) << 16;
+			cur_p->app0 |= tcp_hdrlen(skb) << 24;
+
+			cur_p->app3 = skb_shinfo(skb)->gso_size | (skb->len << 14);
+		}
 	}
 
 #ifdef CONFIG_AXIENET_HAS_MCDMA
@@ -1296,7 +1345,8 @@ static int axienet_recv(struct net_device *ndev, int budget,
 		skb = (struct sk_buff *)(cur_p->sw_id_offset);
 
 		if (lp->eth_hasnobuf ||
-		    (lp->axienet_config->mactype != XAXIENET_1G))
+		    (lp->axienet_config->mactype != XAXIENET_1G &&
+			lp->axienet_config->mactype != XAXIENET_10G_25G))
 			length = cur_p->status & XAXIDMA_BD_STS_ACTUAL_LEN_MASK;
 		else
 			length = cur_p->app4 & 0x0000FFFF;
@@ -1340,7 +1390,8 @@ static int axienet_recv(struct net_device *ndev, int budget,
 
 		/* if we're doing Rx csum offload, set it up */
 		if (lp->features & XAE_FEATURE_FULL_RX_CSUM &&
-		    (lp->axienet_config->mactype == XAXIENET_1G) &&
+		    (lp->axienet_config->mactype == XAXIENET_1G ||
+		    lp->axienet_config->mactype == XAXIENET_10G_25G) &&
 		    !lp->eth_hasnobuf) {
 			csumstatus = (cur_p->app2 &
 				      XAE_FULL_CSUM_STATUS_MASK) >> 3;
@@ -2420,6 +2471,81 @@ static int axienet_ethtools_get_ts_info(struct net_device *ndev,
 }
 #endif
 
+/**
+ * axienet_ethtools_sset_count - Get number of strings that
+ *				 get_strings will write.
+ * @ndev:	Pointer to net_device structure
+ * @sset:	Get the set strings
+ *
+ * Return: number of strings, on success, Non-zero error value on
+ *	   failure.
+ */
+int axienet_ethtools_sset_count(struct net_device *ndev, int sset)
+{
+	switch (sset) {
+	case ETH_SS_STATS:
+#ifdef CONFIG_AXIENET_HAS_MCDMA
+		return axienet_sset_count(ndev, sset);
+#else
+		return AXIENET_ETHTOOLS_SSTATS_LEN;
+#endif
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+/**
+ * axienet_ethtools_get_stats - Get the extended statistics
+ *				about the device.
+ * @ndev:	Pointer to net_device structure
+ * @stats:	Pointer to ethtool_stats structure
+ * @data:	To store the statistics values
+ *
+ * Return: None.
+ */
+void axienet_ethtools_get_stats(struct net_device *ndev,
+				struct ethtool_stats *stats,
+				u64 *data)
+{
+	unsigned int i = 0;
+
+	data[i++] = ndev->stats.tx_packets;
+	data[i++] = ndev->stats.rx_packets;
+	data[i++] = ndev->stats.tx_bytes;
+	data[i++] = ndev->stats.rx_bytes;
+	data[i++] = ndev->stats.tx_errors;
+	data[i++] = ndev->stats.rx_missed_errors + ndev->stats.rx_frame_errors;
+
+#ifdef CONFIG_AXIENET_HAS_MCDMA
+	axienet_get_stats(ndev, stats, data);
+#endif
+}
+
+/**
+ * axienet_ethtools_strings - Set of strings that describe
+ *			 the requested objects.
+ * @ndev:	Pointer to net_device structure
+ * @sset:	Get the set strings
+ * @data:	Data of Transmit and Receive statistics
+ *
+ * Return: None.
+ */
+void axienet_ethtools_strings(struct net_device *ndev, u32 sset, u8 *data)
+{
+	int i;
+
+	for (i = 0; i < AXIENET_ETHTOOLS_SSTATS_LEN; i++) {
+		if (sset == ETH_SS_STATS)
+			memcpy(data + i * ETH_GSTRING_LEN,
+			       axienet_get_ethtools_strings_stats[i].name,
+			       ETH_GSTRING_LEN);
+	}
+#ifdef CONFIG_AXIENET_HAS_MCDMA
+	axienet_strings(ndev, sset, data);
+#endif
+}
+
+
 static const struct ethtool_ops axienet_ethtool_ops = {
 	.get_drvinfo    = axienet_ethtools_get_drvinfo,
 	.get_regs_len   = axienet_ethtools_get_regs_len,
@@ -2431,6 +2557,9 @@ static const struct ethtool_ops axienet_ethtool_ops = {
 	.set_pauseparam = axienet_ethtools_set_pauseparam,
 	.get_coalesce   = axienet_ethtools_get_coalesce,
 	.set_coalesce   = axienet_ethtools_set_coalesce,
+	.get_sset_count	= axienet_ethtools_sset_count,
+	.get_ethtool_stats = axienet_ethtools_get_stats,
+	.get_strings = axienet_ethtools_strings,
 #if defined(CONFIG_XILINX_AXI_EMAC_HWTSTAMP) || defined(CONFIG_XILINX_TSN_PTP)
 	.get_ts_info    = axienet_ethtools_get_ts_info,
 #endif
@@ -3026,7 +3155,8 @@ static int axienet_probe(struct platform_device *pdev)
 				XAE_FEATURE_FULL_TX_CSUM;
 			lp->features |= XAE_FEATURE_FULL_TX_CSUM;
 			/* Can checksum TCP/UDP over IPv4. */
-			ndev->features |= NETIF_F_IP_CSUM | NETIF_F_SG;
+			ndev->features |= NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO;
+			ndev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_TSO;
 			break;
 		default:
 			lp->csum_offload_on_tx_path = XAE_NO_CSUM_OFFLOAD;
@@ -3045,7 +3175,8 @@ static int axienet_probe(struct platform_device *pdev)
 		case 2:
 			lp->csum_offload_on_rx_path =
 				XAE_FEATURE_FULL_RX_CSUM;
-			lp->features |= XAE_FEATURE_FULL_RX_CSUM;
+			ndev->features |= NETIF_F_RXCSUM;
+			ndev->hw_features |= NETIF_F_RXCSUM;
 			break;
 		default:
 			lp->csum_offload_on_rx_path = XAE_NO_CSUM_OFFLOAD;

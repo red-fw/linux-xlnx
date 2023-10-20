@@ -132,7 +132,7 @@
 #define XAXIDMA_IRQ_ALL_MASK		0x00007000 /* All interrupts */
 
 /* Default TX/RX Threshold and waitbound values for SGDMA mode */
-#define XAXIDMA_DFT_TX_THRESHOLD	24
+#define XAXIDMA_DFT_TX_THRESHOLD	1
 #define XAXIDMA_DFT_TX_WAITBOUND	254
 #define XAXIDMA_DFT_RX_THRESHOLD	1
 #define XAXIDMA_DFT_RX_WAITBOUND	254
@@ -515,10 +515,13 @@ struct axidma_bd {
 	u32 reserved4;
 	u32 cntrl;
 	u32 status;
-	u32 app0;
+	u32 app0;	/* [0] -> Partial CSUM offload, [1] --> Full CSUM offload, [2] --> GSO
+				[15:8] -> len_l2
+				[23:16] -> len_l3
+				[31:24] -> len_l4 */
 	u32 app1;	/* TX start << 16 | insert */
 	u32 app2;	/* TX csum seed */
-	u32 app3;
+	u32 app3;	/* mss + (pkt_len << 14) */
 	u32 app4;
 	phys_addr_t sw_id_offset; /* first unused field by h/w */
 	phys_addr_t ptp_tx_skb;
@@ -836,6 +839,7 @@ struct axienet_dma_q {
 	unsigned long rx_bytes;
 };
 
+#define AXIENET_ETHTOOLS_SSTATS_LEN 6
 #define AXIENET_TX_SSTATS_LEN(lp) ((lp)->num_tx_queues * 2)
 #define AXIENET_RX_SSTATS_LEN(lp) ((lp)->num_rx_queues * 2)
 

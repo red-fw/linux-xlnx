@@ -119,4 +119,10 @@ config PTP_1588_CLOCK_KVM
 	  To compile this driver as a module, choose M here: the module
 	  will be called ptp_kvm.
 
+config PTP_1588_XILINX
+	tristate "Xilinx PTP clock"
+	select PTP_1588_CLOCK
+	help
+	  This driver adds support for xilinx 1588 block
+
 endmenu

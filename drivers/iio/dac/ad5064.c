@@ -1037,6 +1037,7 @@ static const struct i2c_device_id ad5064_i2c_ids[] = {
 	{"ad5629-3", ID_AD5629_2}, /* similar enough to ad5629-2 */
 	{"ad5645r-1v25", ID_AD5645R_1V25 },
 	{"ad5645r-2v5", ID_AD5645R_2V5 },
+	{"ad5647r-2v5", ID_AD5647R_2V5 },
 	{"ad5665", ID_AD5665 },
 	{"ad5665r-1v25", ID_AD5665R_1V25 },
 	{"ad5665r-2v5", ID_AD5665R_2V5 },

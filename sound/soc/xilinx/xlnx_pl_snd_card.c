@@ -114,8 +114,8 @@ static int xlnx_i2s_card_hw_params(struct snd_pcm_substream *substream,
 	data_width = params_width(params);
 	sample_rate = params_rate(params);
 
-	/* only 2 channels supported */
-	if (ch != 2)
+	/* only 2 or 4 channels supported */
+	if ((ch != 2) && (ch != 4))
 		return -EINVAL;
 
 	prv = snd_soc_card_get_drvdata(rtd->card);
@@ -157,7 +157,8 @@ static int xlnx_i2s_card_hw_params(struct snd_pcm_substream *substream,
 	}
 
 	prv->mclk_val = prv->mclk_ratio * sample_rate;
-	clk_div = DIV_ROUND_UP(prv->mclk_ratio, 2 * ch * data_width);
+	// We use an extra I2S channel for 4-channel audio, so no need to change the clock rate.
+	clk_div = DIV_ROUND_UP(prv->mclk_ratio, 2 * 2 * data_width);
 	ret = snd_soc_dai_set_clkdiv(cpu_dai, 0, clk_div);
 	if (ret)
 		return ret;
@@ -322,9 +323,7 @@ static int xlnx_snd_probe(struct platform_device *pdev)
 		struct device_node *pnode = of_parse_phandle(node[i],
 							     "xlnx,snd-pcm", 0);
 		if (!pnode) {
-			dev_err(card->dev, "platform node not found\n");
-			of_node_put(pnode);
-			return -ENODEV;
+			continue;
 		}
 
 		/*

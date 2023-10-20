@@ -18,6 +18,12 @@
 
 #include <linux/w1.h>
 
+static int w1_gpio_master_id(void *data)
+{
+	struct w1_gpio_platform_data *pdata = data;
+	return pdata->master_id;
+}
+
 static u8 w1_gpio_set_pullup(void *data, int delay)
 {
 	struct w1_gpio_platform_data *pdata = data;
@@ -75,6 +81,8 @@ static int w1_gpio_probe(struct platform_device *pdev)
 	/* Enforce open drain mode by default */
 	enum gpiod_flags gflags = GPIOD_OUT_LOW_OPEN_DRAIN;
 	int err;
+    const __be32 *master_id;
+    int size;
 
 	if (of_have_populated_dt()) {
 		pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
@@ -89,6 +97,13 @@ static int w1_gpio_probe(struct platform_device *pdev)
 		 */
 		if (of_get_property(np, "linux,open-drain", NULL))
 			gflags = GPIOD_OUT_LOW;
+
+	    master_id = of_get_property(np, "master-id", &size);
+	    if (master_id && size == sizeof(*master_id) && *master_id)
+	    {
+		    pdata->master_id = be32_to_cpup(master_id);
+		    dev_info(&pdev->dev, "master-id set to %d\n", pdata->master_id);
+	    }
 
 		pdev->dev.platform_data = pdata;
 	}
@@ -133,6 +148,11 @@ static int w1_gpio_probe(struct platform_device *pdev)
 	 */
 	if (gflags == GPIOD_OUT_LOW_OPEN_DRAIN)
 		master->set_pullup = w1_gpio_set_pullup;
+
+	if(pdata->master_id > 0)
+	{
+		master->master_id = w1_gpio_master_id;
+	}
 
 	err = w1_add_master_device(master);
 	if (err) {

@@ -95,6 +95,7 @@ struct abx80x_cap {
 	u16 pn;
 	bool has_tc;
 	bool has_wdog;
+	bool ignore_oss_of_error;
 };
 
 static struct abx80x_cap abx80x_caps[] = {
@@ -105,7 +106,7 @@ static struct abx80x_cap abx80x_caps[] = {
 	[AB1801] = {.pn = 0x1801},
 	[AB1803] = {.pn = 0x1803},
 	[AB1804] = {.pn = 0x1804, .has_tc = true, .has_wdog = true},
-	[AB1805] = {.pn = 0x1805, .has_tc = true, .has_wdog = true},
+	[AB1805] = {.pn = 0x1805, .has_tc = true, .has_wdog = true, .ignore_oss_of_error = true},
 	[RV1805] = {.pn = 0x1805, .has_tc = true, .has_wdog = true},
 	[ABX80X] = {.pn = 0}
 };
@@ -114,6 +115,7 @@ struct abx80x_priv {
 	struct rtc_device *rtc;
 	struct i2c_client *client;
 	struct watchdog_device wdog;
+	struct abx80x_cap *cap;
 };
 
 static int abx80x_is_rc_mode(struct i2c_client *client)
@@ -160,8 +162,10 @@ static int abx80x_enable_trickle_charger(struct i2c_client *client,
 static int abx80x_rtc_read_time(struct device *dev, struct rtc_time *tm)
 {
 	struct i2c_client *client = to_i2c_client(dev);
+	struct abx80x_priv *priv = i2c_get_clientdata(client);
 	unsigned char buf[8];
 	int err, flags, rc_mode = 0;
+	bool log_date_time_regs = false;
 
 	/* Read the Oscillator Failure only in XT mode */
 	rc_mode = abx80x_is_rc_mode(client);
@@ -174,8 +178,16 @@ static int abx80x_rtc_read_time(struct device *dev, struct rtc_time *tm)
 			return flags;
 
 		if (flags & ABX8XX_OSS_OF) {
-			dev_err(dev, "Oscillator failure, data is invalid.\n");
-			return -EINVAL;
+			if (priv->cap->ignore_oss_of_error)
+			{
+				dev_warn(dev, "Oscillator failure. Time may have slipped.\n");
+				log_date_time_regs = true;
+			}
+			else
+			{
+				dev_err(dev, "Oscillator failure, data is invalid.\n");
+				return -EINVAL;
+			}
 		}
 	}
 
@@ -193,6 +205,18 @@ static int abx80x_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	tm->tm_mday = bcd2bin(buf[ABX8XX_REG_DA] & 0x3F);
 	tm->tm_mon = bcd2bin(buf[ABX8XX_REG_MO] & 0x1F) - 1;
 	tm->tm_year = bcd2bin(buf[ABX8XX_REG_YR]) + 100;
+
+	if (log_date_time_regs)
+	{
+		dev_info(dev, "tm_sec:%d, tm_min:%d, tm_hour:%d, tm_wday:%d, tm_mday:%d, tm_mon:%d, tm_year:%d\n",
+			tm->tm_sec,
+			tm->tm_min,
+			tm->tm_hour,
+			tm->tm_wday,
+			tm->tm_mday,
+			tm->tm_mon,
+			tm->tm_year);
+	}
 
 	return 0;
 }
@@ -795,6 +819,11 @@ static int abx80x_probe(struct i2c_client *client,
 		return -EINVAL;
 	}
 
+	if (abx80x_caps[part].ignore_oss_of_error)
+	{
+		dev_info(&client->dev, "This is a modified driver which will read the date/time registers after an OSS OF error.\n");
+	}
+
 	if (np && abx80x_caps[part].has_tc)
 		trickle_cfg = abx80x_dt_trickle_cfg(np);
 
@@ -819,6 +848,7 @@ static int abx80x_probe(struct i2c_client *client,
 
 	priv->rtc->ops = &abx80x_rtc_ops;
 	priv->client = client;
+	priv->cap = &abx80x_caps[part];
 
 	i2c_set_clientdata(client, priv);
 
